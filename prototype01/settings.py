@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     
     'rest_auth',
 #    'rest_auth.registration',
+    'sslserver',
 
     'users',
     'boards',
@@ -86,6 +87,9 @@ WSGI_APPLICATION = 'prototype01.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/3.1/ref/settings/#databases
 
+import my_settings;
+
+#DATABASES = my_settings.DATABASES
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
@@ -123,30 +127,29 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_AUTHENTICATION_CLASSES' : [
         'rest_framework.authentication.TokenAuthentication',
-    ]
+        'rest_framework.authentication.BasicAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
+    ],
+    'DEFAULT_THROTTLE_CLASSES' : [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES' : {
+        'anon' : '10000/day',
+        'user' : '10000/day',
+    },
 }
 
-# Internationalization
-# https://docs.djangoproject.com/en/3.1/topics/i18n/
-
 LANGUAGE_CODE = 'en-us'
-
 TIME_ZONE = 'Asia/Seoul'
-
-#USE_I18N = True
-
-#USE_L10N = True
-
-#USE_TZ = True
-
 DATETIME_FORMAT = "Y-m-d"
-
 USE_L10N = False
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/3.1/howto/static-files/
 
 STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'static')
 
-CORS_ORIGIN_ALLOW_ALL = True
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+MEDIA_URL = '/media/'
 
+
+CORS_ORIGIN_ALLOW_ALL = True

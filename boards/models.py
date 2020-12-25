@@ -39,5 +39,7 @@ class Comment(models.Model):
     create_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
 
-
+class PostImage(models.Model):
+    name = models.CharField(max_length=100)
+    image = models.ImageField(upload_to="")
 

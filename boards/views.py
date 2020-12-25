@@ -1,14 +1,18 @@
 from django.shortcuts import render, get_object_or_404
-from rest_framework import viewsets, views, generics, status
+from rest_framework import viewsets, views, generics, status, pagination
 from rest_framework.response import Response
 
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.throttling import UserRateThrottle, AnonRateThrottle
 
 from .serializers import BoardSerializer
-from .serializers import PostSerializer, PostDetailSerializer , PostCreateSerializer
+from .serializers import PostSerializer, PostDetailSerializer , PostCreateSerializer, PostImageSerializer
 from .serializers import CommentSerializer
+from .serializers import LikeSerializer
 
-from .models import Board, Post, Comment
+from .models import Board, Post, Comment, PostImage
+
+from .pagination import PostPagination
 
 from django.contrib.auth.models import User
 
@@ -18,6 +22,7 @@ class BoardViewSet(viewsets.ModelViewSet):
     serializer_class = BoardSerializer
     queryset = Board.objects.all()
     template_name =''
+    throttle_classes = [UserRateThrottle, AnonRateThrottle]
 
     def get_permissions(self):
         if self.action == 'list':
@@ -28,8 +33,9 @@ class BoardViewSet(viewsets.ModelViewSet):
 
 class PostViewSet(viewsets.ModelViewSet):
     serializer_class = PostSerializer
+    pagination_class = PostPagination
     queryset = Post.objects.all()
-    max_post = 10
+    throttle_classes = [UserRateThrottle, AnonRateThrottle]
     
     def get_permissions(self):
         if self.action == 'list':
@@ -47,87 +53,71 @@ class PostViewSet(viewsets.ModelViewSet):
         else :
             return PostSerializer
 
-    def list(self, request) :
-        if 'page' in request.GET:
-            page = int(request.GET['page'])
+    def get_queryset(self):
+        if self.action == 'list' :
+            page = self.request.query_params.get('page', 1)
+            board = self.request.query_params.get('board', 1)
+            queryset = Post.objects.filter(board=board).order_by('-create_at')
         else :
-            page = 1
+            queryset = self.queryset;
+        return queryset
 
-        if 'board'  in request.GET:
-            board = int(request.GET['board'])
-
-        page_start = (page - 1) * self.max_post;
-        page_end = page * self.max_post
-        queryset = Post.objects.filter(board=board).order_by('-create_at')[page_start:page_end]
-
-        serializer = self.get_serializer(queryset, many=True)
-
-        data = {} 
-        data['posts'] = serializer.data
-        data['count'] = queryset.count() 
-        data['total_page'] = math.ceil(queryset.count() / self.max_post)
-        return Response(data)
-
-    def retrieve(self, request, pk=None):
-        user = request.user
-        post = get_object_or_404(self.queryset, pk=pk)
+    def retrieve(self, request, *args, **kwargs):
+        post = get_object_or_404(self.queryset, pk=kwargs["pk"])
         post.views_up()
+        return super().retrieve(request, args, kwargs)
 
-        serializer_class = self.get_serializer_class()
-        post_serializer = serializer_class(post)
-        
-        comments = Comment.objects.filter(post=pk);
-        comments_serializer = CommentSerializer(comments, many=True)
-        
-        try : 
-            liked_user = post.likes.get(pk=user.pk)
-            is_liked = True
-        except User.DoesNotExist:
-            is_liked = False
-
-        resp = { 'post' : post_serializer.data , 'comments' : comments_serializer.data, 'is_liked' : is_liked}
-        return Response(resp)
-
-    def create(self, request):
-        user = request.user
-        data = request.data
-
-        serializer_class = self.get_serializer_class()        
-        serializer = serializer_class(data=data)
-        serializer.is_valid(raise_exception=True)
-
-        post = serializer.save(author=user)
-
-        headers = self.get_success_headers(serializer.data)
-        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+    def perform_create(self, serializer):
+        user = self.request.user
+        serializer.save(author=user)
 
 class CommentViewSet(viewsets.ModelViewSet):
     serializer_class = CommentSerializer
-    queryset = Comment.objects.all()
     permission_classes = [AllowAny] # release IsAuthenticated
+    pagination_class = PostPagination
+    queryset = Comment.objects.all()
+    throttle_classes = [UserRateThrottle, AnonRateThrottle]
     
-    def create(self, request):
-        user = request.user
-        data = request.data
-        post = get_object_or_404(Post.objects.all(), pk=data['post'])
+    def perform_create(self,serializer) :
+        user = self.request.user
+        serializer.save(author=user)
 
-        serializer = self.get_serializer(data=data)
-        serializer.is_valid(raise_exception=True)
-        comment = serializer.save(author=user, post = post)
-        
-        comments_serialzier = CommentSerializer(post.comment, many=True)
-        
-        headers = self.get_success_headers(serializer.data)
-        return Response(comments_serialzier.data, status=status.HTTP_201_CREATED, headers=headers)
+    #def create(self, request, * args, **kwargs):
+    #    serializer = self.get_serializer(data=request.data)
+    #    serializer.is_valid(raise_exception=True)
+    #    self.perform_create(serializer)
+class SearchAPIView(generics.ListAPIView):
+    permission_classes = [AllowAny]
+    pagination_class = PostPagination
+    serializer_class = PostSerializer
+    queryset = Post.objects.all()
 
+    def get_response(self):
+        return Response({})
+
+    def get_queryset(self):
+        search = self.request.query_params.get("search", "")
+        search_type = self.request.query_params.get("type", "title")
+        board = self.request.query_params.get('board', 1)
+        
+        if search_type == 'title' :
+            queryset = Post.objects.filter(title__icontains=search, board=board).order_by('-create_at')
+        else : 
+            queryset = Post.objects.filter(title__icontains=search, board=board).order_by('-create_at')
+
+        return queryset
 
 class LikeAPIView(generics.GenericAPIView):
     permission_classes = [AllowAny]
+    serializer_class = LikeSerializer
 
     def get(self, request):
         user = request.user;
-        pk = request.GET['post']
-        post = Post.objects.all().get(pk=pk)
+        pk = request.query_params.get('post')
+        try : 
+            post = Post.objects.all().get(pk=pk)
+        except Post.DoesNotExist:
+            return Response(data={'msg' : 'bad request'}, status=status.HTTP_400_BAD_REQUEST)
 
         try : 
             liked_user = post.likes.get(pk=user.pk)
@@ -138,11 +128,19 @@ class LikeAPIView(generics.GenericAPIView):
             post.likes.add(user)
             post.save()
             is_liked = True
-            print("up likes")
-
         likes_count = post.likes.count()
-        return Response({ 'likes_count' : likes_count, 'is_liked' : is_liked })
+
+        data = {
+            'likes_count' : likes_count,
+            'is_liked' : is_liked
+                }
+        serializer = self.get_serializer(instance=data)
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
             
-        
+class PostImageViewSet(viewsets.ModelViewSet):
+    permission_classes = [AllowAny]
+    serializer_class = PostImageSerializer
+    queryset = PostImage.objects.all()
 
